@@ -1,5 +1,7 @@
 # Blue Connect Plus Salt (Gold) → Home Assistant via ESP32 (BLE Bridge)
 
+🇬🇧 **English version** | [🇩🇪 Deutsch](README.de.md)
+
 Read your **Blueriiot Blue Connect Plus Salt (Gold)** pool sensor directly into Home Assistant — without the Blueriiot cloud, without their app, without any subscription. An ESP32 acts as a local BLE-to-WiFi bridge that wakes the sensor, reads pH / ORP / temperature / salinity / battery, and exposes everything as native HA entities.
 
 ![status](https://img.shields.io/badge/status-working-success)
