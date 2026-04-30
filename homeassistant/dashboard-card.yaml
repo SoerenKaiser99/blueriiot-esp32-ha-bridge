@@ -1,0 +1,337 @@
+# Pool Status Dashboard Card
+#
+# Requires HACS frontend cards:
+#   - card-mod
+#   - multiple-entity-row
+#
+# Drop this into a Lovelace dashboard via "Edit Dashboard" → "Add Card" →
+# "Manual" and paste the YAML below.
+#
+# Tunable variables (search & adjust to your pool):
+#   ph_z   = 7.2     pH target
+#   vol    = 11.0    Pool volume in m³
+#   faktor = 10.0    pH-corrector dose: g per m³ per 0.1 pH
+
+type: vertical-stack
+cards:
+  - type: markdown
+    content: >-
+      {%- set ph_sensor   = 'sensor.blueconnect_pool_ph' -%}
+      {%- set orp_sensor  = 'sensor.blueconnect_pool_orp' -%}
+      {%- set temp_sensor = 'sensor.blueconnect_pool_temperature' -%}
+      {%- set ph_z = 7.2 -%}
+      {%- set ph   = states(ph_sensor)  | float(-1) -%}
+      {%- set orp  = states(orp_sensor) | float(-1) -%}
+      {%- set temp = states(temp_sensor)| float(-1) -%}
+      {%- set ph_ok  = ph  > 7.0 and ph  < 7.6 -%}
+      {%- set orp_ok = orp > 650 and orp < 750  -%}
+      {%- if ph < 0 -%}
+        {%- set status = '⚠️ Sensor offline' -%}
+      {%- elif ph_ok and orp_ok -%}
+        {%- set status = '✅ Water quality good' -%}
+      {%- elif not ph_ok -%}
+        {%- set status = '⚠️ pH out of range' -%}
+      {%- else -%}
+        {%- set status = '⚠️ ORP / chlorine out of range' -%}
+      {%- endif -%}
+      <b>{{ status }}</b>{% if temp > 0 %} · {{ temp | round(1) }}°C{% endif %}
+    card_mod:
+      style: |-
+        ha-card {
+          background: var(--card-background-color) !important;
+          border-radius: 16px 16px 0 0 !important;
+          border-bottom: none !important;
+          box-shadow: none !important;
+          padding: 10px 16px 8px 16px !important;
+          font-size: 15px !important;
+        }
+
+  - type: entities
+    show_header_toggle: false
+    card_mod:
+      style: |-
+        ha-card {
+          background: var(--card-background-color) !important;
+          border-radius: 0 !important;
+          border-top: none !important;
+          border-bottom: none !important;
+          box-shadow: none !important;
+        }
+    entities:
+      - entity: sensor.blueconnect_pool_ph
+        type: custom:multiple-entity-row
+        name: pH (live)
+        icon: mdi:ph
+        format: precision2
+        unit: pH
+        card_mod:
+          style: >-
+            {% set ph     = states('sensor.blueconnect_pool_ph') | float(-1) %}
+            {% set vol    = 11.0 %}
+            {% set ph_z   = 7.2 %}
+            {% set faktor = 10.0 %}
+            {% set mg = (((ph - ph_z) | abs / 0.1) * faktor * vol) | round(0) | int %}
+            {% if ph < 0 %}
+              {% set s = 'No data' %}
+              {% set fg = '#9e9e9e' %}{% set bg = 'rgba(158,158,158,0.08)' %}
+              {% set dos = '' %}
+            {% elif ph > 7.8 or ph < 6.8 %}
+              {% set s = 'Far too ' ~ ('high!' if ph > ph_z else 'low!') %}
+              {% set fg = '#ef5350' %}{% set bg = 'rgba(239,83,80,0.12)' %}
+              {% set dos = 'Add ' ~ mg ~ 'g pH-' ~ ('Minus' if ph > ph_z else 'Plus') ~ '.' %}
+            {% elif ph > 7.6 or ph < 7.0 %}
+              {% set s = 'Slightly too ' ~ ('high' if ph > ph_z else 'low') %}
+              {% set fg = '#ffa726' %}{% set bg = 'rgba(255,167,38,0.12)' %}
+              {% set dos = 'Add ' ~ mg ~ 'g pH-' ~ ('Minus' if ph > ph_z else 'Plus') ~ '.' %}
+            {% else %}
+              {% set s = 'pH ideal!' %}
+              {% set fg = '#66bb6a' %}{% set bg = 'rgba(102,187,106,0.12)' %}
+              {% set dos = '' %}
+            {% endif %}
+            {% set msg = s ~ ('\A Dose: ' ~ dos if dos else '') %}
+            :host { display: block; margin-bottom: 10px !important; position: relative; }
+            :host::before {
+              content: "Target: {{ ph_z }} pH  |  Vol: {{ vol }} m3  |  Factor: {{ faktor }}g/m3/0.1 pH";
+              display: block; position: absolute; bottom: 8px; left: 12px;
+              font-size: 11px; color: rgba(255,255,255,0.4); z-index: 2;
+            }
+            :host::after {
+              content: "{{ msg }}";
+              background: {{ bg }} !important; color: {{ fg }} !important;
+              display: block; margin-top: 8px; padding: 7px 12px 26px 12px;
+              border-radius: 6px; font-size: 14px; font-weight: 600;
+              line-height: 1.4; white-space: pre-wrap; box-sizing: border-box;
+            }
+
+      - entity: sensor.blueconnect_pool_orp
+        type: custom:multiple-entity-row
+        name: ORP / chlorine power
+        icon: mdi:lightning-bolt-circle
+        format: precision0
+        unit: mV
+        card_mod:
+          style: >-
+            {% set v = states('sensor.blueconnect_pool_orp') | float(-1) %}
+            {% set vi = v | round(0) | int %}
+            {% if v < 0 %}
+              {% set s = 'No data' %}
+              {% set fg = '#9e9e9e' %}{% set bg = 'rgba(158,158,158,0.08)' %}{% set dos = '' %}
+            {% elif v < 500 %}
+              {% set s = 'Critically low! (' ~ vi ~ ' mV)' %}
+              {% set fg = '#ef5350' %}{% set bg = 'rgba(239,83,80,0.12)' %}
+              {% set dos = 'Add chlorine and lower pH — disinfection insufficient!' %}
+            {% elif v > 900 %}
+              {% set s = 'Too high! (' ~ vi ~ ' mV)' %}
+              {% set fg = '#ef5350' %}{% set bg = 'rgba(239,83,80,0.12)' %}
+              {% set dos = 'Let chlorine break down — open cover.' %}
+            {% elif v < 650 %}
+              {% set s = 'Too low (' ~ vi ~ ' mV)' %}
+              {% set fg = '#ffa726' %}{% set bg = 'rgba(255,167,38,0.12)' %}
+              {% set dos = 'Check pH and chlorine — disinfection inadequate.' %}
+            {% elif v > 750 %}
+              {% set s = 'Slightly elevated (' ~ vi ~ ' mV)' %}
+              {% set fg = '#ffa726' %}{% set bg = 'rgba(255,167,38,0.12)' %}
+              {% set dos = 'Still safe, monitor.' %}
+            {% else %}
+              {% set s = 'Disinfection optimal! (' ~ vi ~ ' mV)' %}
+              {% set fg = '#66bb6a' %}{% set bg = 'rgba(102,187,106,0.12)' %}{% set dos = '' %}
+            {% endif %}
+            {% set msg = s ~ ('\A ' ~ dos if dos else '') %}
+            :host { display: block; margin-bottom: 10px !important; position: relative; }
+            :host::before {
+              content: "Target: 650-750 mV  |  Chlorine proxy (no direct sensor)";
+              display: block; position: absolute; bottom: 8px; left: 12px;
+              font-size: 11px; color: rgba(255,255,255,0.4); z-index: 2;
+            }
+            :host::after {
+              content: "{{ msg }}";
+              background: {{ bg }} !important; color: {{ fg }} !important;
+              display: block; margin-top: 8px; padding: 7px 12px 26px 12px;
+              border-radius: 6px; font-size: 14px; font-weight: 600;
+              line-height: 1.4; white-space: pre-wrap; box-sizing: border-box;
+            }
+
+      - entity: sensor.blueconnect_pool_temperature
+        type: custom:multiple-entity-row
+        name: Water temperature
+        icon: mdi:thermometer
+        format: precision1
+        unit: °C
+        card_mod:
+          style: >-
+            {% set t = states('sensor.blueconnect_pool_temperature') | float(-1) %}
+            {% if t < 0 %}
+              {% set s = 'No data' %}{% set fg = '#9e9e9e' %}{% set bg = 'rgba(158,158,158,0.08)' %}
+            {% elif t < 18 %}
+              {% set s = 'Cold - ' ~ t|round(1) ~ 'C' %}{% set fg = '#29b6f6' %}{% set bg = 'rgba(41,182,246,0.10)' %}
+            {% elif t > 32 %}
+              {% set s = 'Too hot! ' ~ t|round(1) ~ 'C' %}{% set fg = '#ef5350' %}{% set bg = 'rgba(239,83,80,0.12)' %}
+            {% elif t > 28 %}
+              {% set s = 'Warm - ' ~ t|round(1) ~ 'C' %}{% set fg = '#ffa726' %}{% set bg = 'rgba(255,167,38,0.12)' %}
+            {% else %}
+              {% set s = 'Pleasant - ' ~ t|round(1) ~ 'C' %}{% set fg = '#66bb6a' %}{% set bg = 'rgba(102,187,106,0.12)' %}
+            {% endif %}
+            :host { display: block; margin-bottom: 10px !important; }
+            :host::after {
+              content: "{{ s }}";
+              background: {{ bg }} !important; color: {{ fg }} !important;
+              display: block; margin-top: 8px; padding: 7px 12px;
+              border-radius: 6px; font-size: 14px; font-weight: 600;
+            }
+
+      - entity: sensor.blueconnect_pool_salinity
+        type: custom:multiple-entity-row
+        name: Salinity
+        icon: mdi:shaker-outline
+        card_mod:
+          style: >-
+            {% set s_val = states('sensor.blueconnect_pool_salinity') | float(-1) %}
+            {% if s_val < 0 %}
+              {% set s = 'No data' %}{% set fg = '#9e9e9e' %}{% set bg = 'rgba(158,158,158,0.08)' %}
+            {% elif s_val < 6.2 %}
+              {% set s = 'Low - ' ~ s_val|round(1) ~ ' g/L' %}{% set fg = '#29b6f6' %}{% set bg = 'rgba(41,182,246,0.10)' %}
+            {% elif s_val < 6.8 %}
+              {% set s = 'Ideal - ' ~ s_val|round(1) ~ ' g/L' %}{% set fg = '#66bb6a' %}{% set bg = 'rgba(102,187,106,0.12)' %}
+            {% elif s_val < 7.0 %}
+              {% set s = 'Elevated - ' ~ s_val|round(1) ~ ' g/L' %}{% set fg = '#ffa726' %}{% set bg = 'rgba(255,167,38,0.12)' %}
+            {% else %}
+              {% set s = 'High - ' ~ s_val|round(1) ~ ' g/L' %}{% set fg = '#ef5350' %}{% set bg = 'rgba(239,83,80,0.12)' %}
+            {% endif %}
+            :host { display: block; margin-bottom: 4px !important; }
+            :host::after {
+              content: "{{ s }}";
+              background: {{ bg }} !important; color: {{ fg }} !important;
+              display: block; margin-top: 8px; padding: 7px 12px;
+              border-radius: 6px; font-size: 14px; font-weight: 600;
+            }
+
+  - type: entities
+    show_header_toggle: false
+    state_color: true
+    card_mod:
+      style: |-
+        ha-card {
+          background-color: var(--card-background-color) !important;
+          border-top: none !important;
+          border-radius: 0 !important;
+          box-shadow: none !important;
+        }
+    entities:
+      - entity: input_boolean.blueriiot_tipps
+        name: Dosing instructions & help
+        icon: mdi:school-outline
+        tap_action:
+          action: toggle
+
+  - type: conditional
+    conditions:
+      - entity: input_boolean.blueriiot_tipps
+        state: "on"
+    card:
+      type: markdown
+      card_mod:
+        style: |-
+          ha-card {
+            background-color: var(--card-background-color) !important;
+            border-top: none !important;
+            border-top-left-radius: 0px !important;
+            border-top-right-radius: 0px !important;
+            border-bottom-left-radius: 16px !important;
+            border-bottom-right-radius: 16px !important;
+            box-shadow: none !important;
+          }
+      content: >-
+        {% set ph_sensor   = 'sensor.blueconnect_pool_ph' %}
+        {% set orp_sensor  = 'sensor.blueconnect_pool_orp' %}
+        {% set temp_sensor = 'sensor.blueconnect_pool_temperature' %}
+        {% set ph     = states(ph_sensor)   | float(-1) %}
+        {% set orp    = states(orp_sensor)  | float(-1) %}
+        {% set temp   = states(temp_sensor) | float(-1) %}
+        {% set vol    = 11.0 %}
+        {% set ph_z   = 7.2 %}
+        {% set faktor = 10.0 %}
+        {% set mg = (((ph - ph_z) | abs / 0.1) * faktor * vol) | round(0) | int if ph > 0 else 0 %}
+        {% set step = namespace(n=1) %}
+        {% set actions = namespace(needed=false) %}
+
+        **<font color="#ffa726">Step-by-step at {{ temp | round(1) if temp > 0 else '?' }}°C – Pool {{ vol }} m³</font>**
+
+        ***
+
+        {% if ph < 0 %}
+
+        ### Sensor offline. Check Blueriiot connection.
+
+        {% else %}
+
+        {% if ph > 7.6 %}
+
+        ### <font color="#29b6f6">Step {{ step.n }}: Lower pH</font>
+        Current pH **{{ ph | round(2) }}** (target: {{ ph_z }}) → add
+        <font color="#ffa726"><b>{{ mg }}g pH-Minus</b></font>. Re-measure after 2h.
+        {% set step.n = step.n + 1 %}{% set actions.needed = true %}
+
+        ***
+
+        {% elif ph < 7.0 %}
+
+        ### <font color="#29b6f6">Step {{ step.n }}: Raise pH</font>
+        Current pH **{{ ph | round(2) }}** (target: {{ ph_z }}) → add
+        <font color="#ffa726"><b>{{ mg }}g pH-Plus</b></font>. Re-measure after 2h.
+        {% set step.n = step.n + 1 %}{% set actions.needed = true %}
+
+        ***
+
+        {% endif %}
+
+        {% if orp < 650 %}
+
+        ### <font color="#29b6f6">Step {{ step.n }}: Improve disinfection</font>
+        ORP: **{{ orp | round(0) | int }} mV** (target: 650–750 mV) → top up chlorine and check pH.
+        {% set step.n = step.n + 1 %}{% set actions.needed = true %}
+
+        ***
+
+        {% elif orp > 750 %}
+
+        ### <font color="#29b6f6">Step {{ step.n }}: Watch ORP</font>
+        ORP: **{{ orp | round(0) | int }} mV** – slightly elevated. Aerate pool / open cover.
+        {% set step.n = step.n + 1 %}{% set actions.needed = true %}
+
+        ***
+
+        {% endif %}
+
+        {% if not actions.needed %}
+
+        ### <font color="#66bb6a">All good!</font>
+        pH and ORP within range — enjoy the pool!
+
+        ***
+
+        {% endif %}
+
+        {% endif %}
+
+        ### Notes
+
+        <details style="background: rgba(0,0,0,0.25); padding: 12px;
+        border-radius: 6px; margin-bottom: 8px;">
+          <summary style="font-weight: bold; cursor: pointer; color: #ffb74d;">pH dosing formula</summary>
+          <p style="margin-top: 8px; line-height: 1.4; color: #e0e0e0;">deviation × 10g × m³. Example: pH 7.5 vs 7.2 = 0.3 dev. = 3 × 10 × 11 = 330g pH-Minus. Always dose in small amounts, wait 2h, re-measure.</p>
+        </details>
+
+        <details style="background: rgba(0,0,0,0.25); padding: 12px;
+        border-radius: 6px; margin-bottom: 8px;">
+          <summary style="font-weight: bold; cursor: pointer; color: #ffb74d;">ORP as chlorine proxy</summary>
+          <p style="margin-top: 8px; line-height: 1.4; color: #e0e0e0;">Blueriiot does not measure free chlorine directly. ORP 650–750 mV is ideal for outdoor pools. Low ORP = top up chlorine. High pH drastically reduces ORP — always correct pH first!</p>
+        </details>
+
+        <details style="background: rgba(0,0,0,0.25); padding: 12px;
+        border-radius: 6px; margin-bottom: 8px;">
+          <summary style="font-weight: bold; cursor: pointer; color: #ffb74d;">pH & chlorine effectiveness</summary>
+          <p style="margin-top: 8px; line-height: 1.4; color: #e0e0e0;">At pH 7.0, chlorine is 75% active. At pH 7.8 only 20%! Always correct pH first, then assess chlorine.</p>
+        </details>
+
+card_mod:
+  style: "#root { gap: 0px !important; }"

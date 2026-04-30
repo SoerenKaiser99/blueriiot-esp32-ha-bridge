@@ -1,0 +1,16 @@
+# Auto-read the Blueriiot sensor every 30 minutes.
+#
+# Paste this into Settings → Automations → ⋮ → Edit in YAML.
+# The Pool Enable switch turns itself off after one successful reading
+# (see lambda in blueconnect.yaml), so we only need to turn it on.
+
+alias: Pool Sensor Auslesen (alle 30 Min)
+description: Activates the Blueriiot Pool sensor for periodic readings
+mode: single
+triggers:
+  - trigger: time_pattern
+    minutes: "/30"
+actions:
+  - action: switch.turn_on
+    target:
+      entity_id: switch.blueconnect_pool_enable

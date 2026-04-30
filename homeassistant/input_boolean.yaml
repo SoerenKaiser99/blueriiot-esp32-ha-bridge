@@ -1,0 +1,8 @@
+# Helper toggle for the dashboard's "show tips" section.
+# Add via Settings → Devices & Services → Helpers → Toggle, or paste this
+# into your configuration.yaml under `input_boolean:`.
+
+blueriiot_tipps:
+  name: Blueriiot Pool Tips
+  icon: mdi:school-outline
+  initial: false

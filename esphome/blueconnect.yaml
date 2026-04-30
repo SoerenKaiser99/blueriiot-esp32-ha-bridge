@@ -1,0 +1,212 @@
+# Step 2: Final firmware — connects to Blue Connect Plus Salt and exposes
+# all readings as Home Assistant entities.
+#
+# Replace placeholder values (REPLACE_WITH_*) with your own. Secrets like
+# the Blueriiot MAC, prefixes, and web_server password live in secrets.yaml.
+
+substitutions:
+  devicename: blueconnect
+  entityname: blueconnect
+  blueriiot_mac: !secret blueriiot_mac
+  blueriiot_name_prefix: !secret blueriiot_nameprefix
+  blueriiot_id_prefix: !secret blueriiot_idprefix
+
+  # Blue Connect Plus Salt BLE service / characteristic UUIDs
+  blueriiot_send_service_uuid: 'F3300001-F0A2-9B06-0C59-1BC4763B5C00'
+  blueriiot_send_characteristic_uuid: 'F3300002-F0A2-9B06-0C59-1BC4763B5C00'
+  blueriiot_receive_service_uuid: 'F3300001-F0A2-9B06-0C59-1BC4763B5C00'
+  blueriiot_receive_characteristic_uuid: 'F3300003-F0A2-9B06-0C59-1BC4763B5C00'
+
+esphome:
+  name: ${devicename}
+  friendly_name: Blueconnect
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+
+api:
+  reboot_timeout: 0s
+  encryption:
+    key: "REPLACE_WITH_YOUR_API_ENCRYPTION_KEY"
+
+ota:
+  - platform: esphome
+    password: "REPLACE_WITH_YOUR_OTA_PASSWORD"
+
+safe_mode:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  reboot_timeout: 0s
+  fast_connect: true
+
+  ap:
+    ssid: "Blueconnect Fallback Hotspot"
+    password: "REPLACE_WITH_FALLBACK_PASSWORD"
+
+captive_portal:
+
+web_server:
+  port: 80
+  version: 2
+  auth:
+    username: admin
+    password: !secret web_server_password
+
+esp32_ble_tracker:
+  scan_parameters:
+    active: false
+    interval: 5000ms
+    window: 100ms
+  on_ble_advertise:
+    - mac_address: ${blueriiot_mac}
+      then:
+        - logger.log:
+            format: "Found Blueriiot sensor"
+            level: "INFO"
+
+ble_client:
+  - mac_address: ${blueriiot_mac}
+    id: ble_client_${blueriiot_id_prefix}
+    on_connect:
+      then:
+        - logger.log:
+            format: "Connected to Blueriiot sensor"
+            level: "INFO"
+        - lambda: "id(binary_sensor_${blueriiot_id_prefix}_connected).publish_state(true);"
+        - delay: 2s
+        - button.press: button_${blueriiot_id_prefix}_doreading
+    on_disconnect:
+      - lambda: "id(binary_sensor_${blueriiot_id_prefix}_connected).publish_state(false);"
+
+switch:
+  - platform: ble_client
+    ble_client_id: ble_client_${blueriiot_id_prefix}
+    name: "${blueriiot_name_prefix} Enable"
+    id: switch_${blueriiot_id_prefix}_enable
+  - platform: restart
+    name: "${entityname} Restart"
+    id: reset
+
+sensor:
+  - platform: wifi_signal
+    name: "${entityname} WiFi Signal dB"
+    id: wifi_signal_db
+    update_interval: 120s
+    entity_category: "diagnostic"
+  - platform: copy
+    source_id: wifi_signal_db
+    name: "${entityname} WiFi Signal Percent"
+    filters:
+      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
+    unit_of_measurement: "%"
+    entity_category: "diagnostic"
+
+  - platform: template
+    id: binary_sensor_${blueriiot_id_prefix}_connected
+    name: ${blueriiot_name_prefix} Status
+    device_class: signal_strength
+    entity_category: diagnostic
+  - platform: template
+    id: sensor_${blueriiot_id_prefix}_temperature
+    name: ${blueriiot_name_prefix} Temperature
+    unit_of_measurement: "°C"
+    icon: "mdi:water-thermometer"
+    device_class: "temperature"
+    state_class: "measurement"
+    accuracy_decimals: 1
+  - platform: template
+    id: sensor_${blueriiot_id_prefix}_ph
+    name: ${blueriiot_name_prefix} pH
+    unit_of_measurement: "pH"
+    state_class: "measurement"
+    accuracy_decimals: 2
+  - platform: template
+    id: sensor_${blueriiot_id_prefix}_orp
+    name: ${blueriiot_name_prefix} ORP
+    unit_of_measurement: "mV"
+    device_class: "voltage"
+    state_class: "measurement"
+    accuracy_decimals: 1
+  - platform: template
+    id: sensor_${blueriiot_id_prefix}_bat
+    name: ${blueriiot_name_prefix} Battery
+    unit_of_measurement: "%"
+    icon: "mdi:battery"
+    device_class: "battery"
+    state_class: "measurement"
+    accuracy_decimals: 1
+  - platform: template
+    id: sensor_${blueriiot_id_prefix}_salt
+    name: ${blueriiot_name_prefix} Salinity
+    unit_of_measurement: "g/L"
+    icon: "mdi:shaker-outline"
+    state_class: "measurement"
+    accuracy_decimals: 1
+
+button:
+  - platform: template
+    id: button_${blueriiot_id_prefix}_doreading
+    name: ${blueriiot_name_prefix} do reading
+    internal: true
+    on_press:
+      then:
+        - ble_client.ble_write:
+            id: ble_client_${blueriiot_id_prefix}
+            service_uuid: ${blueriiot_send_service_uuid}
+            characteristic_uuid: ${blueriiot_send_characteristic_uuid}
+            value: !lambda |-
+              return {0x01};
+
+text_sensor:
+  - platform: ble_client
+    id: ${blueriiot_id_prefix}_reading_data
+    name: ${blueriiot_name_prefix} reading data
+    internal: true
+    ble_client_id: ble_client_${blueriiot_id_prefix}
+    service_uuid: ${blueriiot_receive_service_uuid}
+    characteristic_uuid: ${blueriiot_receive_characteristic_uuid}
+    notify: true
+    update_interval: never
+    on_notify:
+      then:
+        - lambda: |-
+            // Raw frame is 12 bytes — see README for byte layout
+            std::string rawhex = format_hex_pretty((uint8_t *) x.c_str(), x.size()).c_str();
+            ESP_LOGD("raw_hex", "%s", rawhex.c_str());
+
+            // Bytes 1-2: Temperature (°C, /100)
+            float temperature = (float)((int16_t)(x[2]<< 8) + x[1]) / 100;
+            ESP_LOGD("temp", "%f", temperature);
+            id(sensor_${blueriiot_id_prefix}_temperature).publish_state(temperature);
+
+            // Bytes 3-4: pH (raw → calibrated)
+            float raw_ph = (float)((int16_t)(x[4]<< 8) + x[3]);
+            float ph = (float)((int16_t)(2048 - raw_ph)) / 232 + 7;
+            ESP_LOGD("ph", "%f", ph);
+            id(sensor_${blueriiot_id_prefix}_ph).publish_state(ph);
+
+            // Bytes 5-6: ORP (mV)
+            float orp = (float)((int16_t)(x[6]<< 8) + x[5]) / 3.86 - 21.57826;
+            ESP_LOGD("orp", "%f", orp);
+            id(sensor_${blueriiot_id_prefix}_orp).publish_state(orp);
+
+            // Bytes 7-8: Salinity (g/L) — divisor /18.0 calibrated against
+            // the official Blueriiot app. Adjust if your app shows a
+            // different value (see README "Calibration").
+            float salt = (float)((int16_t)(x[8]<< 8) + x[7]) / 18.0;
+            ESP_LOGD("salt", "%f", salt);
+            id(sensor_${blueriiot_id_prefix}_salt).publish_state(salt);
+
+            // Byte 11: Battery (%)
+            float bat = (float)((int16_t) x[11]) / 36 * 100;
+            ESP_LOGD("bat", "%f", bat);
+            id(sensor_${blueriiot_id_prefix}_bat).publish_state(bat);
+
+            // Disconnect after one successful reading to save battery
+            id(switch_${blueriiot_id_prefix}_enable).turn_off();
