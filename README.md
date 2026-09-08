@@ -273,6 +273,9 @@ HA caches the entity's display precision from the first registration. Fix:
 ├── homeassistant/
 │   ├── automation.yaml            # Step 8: 30-minute polling
 │   ├── input_boolean.yaml         # Helper toggle for dashboard
+│   ├── packages/
+│   │   ├── rollos.yaml            # Bonus: Alexa morning/night shutter routines + heat protection
+│   │   └── README.rollos.de.md    # Setup + debugging guide (German)
 │   └── dashboard-card.yaml        # Step 9: full Lovelace card
 ├── LICENSE
 └── README.md

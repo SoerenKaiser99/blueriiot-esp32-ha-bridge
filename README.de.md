@@ -273,6 +273,9 @@ HA cached die Display-Precision der Entität ab erster Registrierung. Fix:
 ├── homeassistant/
 │   ├── automation.yaml            # Schritt 8: 30-Min-Polling
 │   ├── input_boolean.yaml         # Helper-Toggle für Dashboard
+│   ├── packages/
+│   │   ├── rollos.yaml            # Bonus: Alexa Guten-Morgen/Gute-Nacht-Rollos + Hitzeschutz
+│   │   └── README.rollos.de.md    # Einrichtung + Debug-Checkliste
 │   └── dashboard-card.yaml        # Schritt 9: Komplette Lovelace-Card
 ├── LICENSE
 ├── README.md                      # English

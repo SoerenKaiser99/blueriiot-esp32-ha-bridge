@@ -1,0 +1,182 @@
+# ---------------------------------------------------------------------------
+# Rollos: "Alexa, guten Morgen" / "Alexa, gute Nacht" + Hitzeschutz
+# ---------------------------------------------------------------------------
+#
+# Home-Assistant-Package. Einbinden in configuration.yaml:
+#
+#   homeassistant:
+#     packages: !include_dir_named packages
+#
+# und diese Datei nach /config/packages/rollos.yaml kopieren.
+# Danach: Entwicklerwerkzeuge → YAML → "Alle YAML-Konfigurationen neu laden"
+# (Cover-Gruppen brauchen einmalig einen HA-Neustart).
+#
+# Was du anpassen musst (alles in diesem Block, sonst nirgends):
+#   1. Die Cover-Entitäten in den beiden Gruppen unten.
+#   2. Den Aussentemperatur-Sensor in den Hitzeschutz-Automationen.
+#   3. Die Entität der Terrassentür in `script.rollos_guten_morgen` (Variable).
+#
+# Logik:
+#   Guten Morgen  → Terrassentür immer ganz auf.
+#                   Alle anderen Rollos auf — AUSSER der Hitzeschutz ist aktiv;
+#                   dann bleiben die Hitzeschutz-Rollos auf 50 % stehen.
+#   Gute Nacht    → alle Rollos zu, Hitzeschutz-Merker zurücksetzen.
+#   Hitzeschutz   → Aussentemperatur > 25 °C (10 min) tagsüber
+#                   → Hitzeschutz-Rollos auf 50 %, Merker an.
+#                   Aussentemperatur < 23 °C (30 min) → Merker aus,
+#                   tagsüber zusätzlich wieder ganz auf.
+# ---------------------------------------------------------------------------
+
+# ----- Merker: wurde wegen Hitze halb heruntergefahren? --------------------
+input_boolean:
+  rollos_hitzeschutz:
+    name: Rollos Hitzeschutz aktiv
+    icon: mdi:sun-thermometer-outline
+    # Kein `initial:` → Zustand überlebt einen HA-Neustart.
+
+# ----- Cover-Gruppen (hier EINMAL die Rollos eintragen) --------------------
+cover:
+  # Alle Rollos im Haus (inkl. Terrassentür). Wird von "Gute Nacht" und
+  # "Guten Morgen" verwendet.
+  - platform: group
+    name: Rollos Alle
+    unique_id: rollos_alle
+    entities:
+      - cover.rollo_wohnzimmer          # <-- anpassen
+      - cover.rollo_kueche              # <-- anpassen
+      - cover.rollo_schlafzimmer        # <-- anpassen
+      - cover.rollo_kinderzimmer        # <-- anpassen
+      - cover.rollo_terrassentuer       # <-- anpassen
+
+  # Nur die Rollos, die bei Hitze auf 50 % fahren sollen (z. B. Südseite).
+  # Wenn es alle sein sollen: dieselbe Liste wie oben eintragen.
+  - platform: group
+    name: Rollos Hitzeschutz
+    unique_id: rollos_hitzeschutz
+    entities:
+      - cover.rollo_wohnzimmer          # <-- anpassen
+      - cover.rollo_kueche              # <-- anpassen
+      - cover.rollo_terrassentuer       # <-- anpassen
+
+# ----- Skripte (werden in Alexa als "Szenen" sichtbar) ---------------------
+script:
+  rollos_guten_morgen:
+    alias: "Rollos: Guten Morgen"
+    description: >-
+      Terrassentür ganz auf. Alle übrigen Rollos auf, es sei denn sie stehen
+      wegen Hitzeschutz auf 50 % – dann bleiben diese stehen.
+    icon: mdi:weather-sunset-up
+    mode: single
+    variables:
+      terrassentuer: cover.rollo_terrassentuer   # <-- anpassen
+    sequence:
+      # 1) Terrassentür immer komplett öffnen – unabhängig vom Hitzeschutz.
+      - alias: Terrassentür ganz öffnen
+        action: cover.open_cover
+        target:
+          entity_id: "{{ terrassentuer }}"
+
+      # 2) Restliche Rollos öffnen. Hitzeschutz-Rollos werden übersprungen,
+      #    wenn der Merker gesetzt ist.
+      - alias: Übrige Rollos öffnen
+        variables:
+          zu_oeffnen: >-
+            {% set alle = expand('cover.rollos_alle')
+                          | map(attribute='entity_id') | list %}
+            {% set hitze = expand('cover.rollos_hitzeschutz')
+                           | map(attribute='entity_id') | list %}
+            {% set skip = hitze
+                          if is_state('input_boolean.rollos_hitzeschutz', 'on')
+                          else [] %}
+            {{ alle | reject('in', skip) | reject('eq', terrassentuer) | list }}
+      - if:
+          - condition: template
+            value_template: "{{ zu_oeffnen | count > 0 }}"
+        then:
+          - action: cover.open_cover
+            target:
+              entity_id: "{{ zu_oeffnen }}"
+
+      # 3) Kurzer Hinweis im Logbuch, damit man in der Ablaufverfolgung sieht,
+      #    warum ggf. Rollos stehen geblieben sind.
+      - action: logbook.log
+        data:
+          name: Rollos Guten Morgen
+          entity_id: script.rollos_guten_morgen
+          message: >-
+            {% if is_state('input_boolean.rollos_hitzeschutz', 'on') %}
+              Hitzeschutz aktiv – nur Terrassentür + {{ zu_oeffnen | count }} weitere Rollos geöffnet.
+            {% else %}
+              Alle Rollos geöffnet ({{ zu_oeffnen | count + 1 }}).
+            {% endif %}
+
+  rollos_gute_nacht:
+    alias: "Rollos: Gute Nacht"
+    description: Alle Rollos schließen und Hitzeschutz-Merker zurücksetzen.
+    icon: mdi:weather-night
+    mode: single
+    sequence:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.rollos_hitzeschutz
+      - action: cover.close_cover
+        target:
+          entity_id: cover.rollos_alle
+
+# ----- Hitzeschutz-Automationen ---------------------------------------------
+automation:
+  - id: rollos_hitzeschutz_aktivieren
+    alias: "Rollos: Hitzeschutz aktivieren (> 25 °C)"
+    description: Bei Hitze tagsüber die Hitzeschutz-Rollos auf 50 % fahren.
+    mode: single
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.aussentemperatur    # <-- anpassen
+        above: 25
+        for:
+          minutes: 10
+    conditions:
+      - condition: state
+        entity_id: input_boolean.rollos_hitzeschutz
+        state: "off"
+      - condition: state
+        entity_id: sun.sun
+        state: above_horizon
+    actions:
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.rollos_hitzeschutz
+      - action: cover.set_cover_position
+        target:
+          entity_id: cover.rollos_hitzeschutz
+        data:
+          position: 50
+
+  - id: rollos_hitzeschutz_beenden
+    alias: "Rollos: Hitzeschutz beenden (< 23 °C)"
+    description: >-
+      Wenn es abgekühlt ist: Merker zurücksetzen. Tagsüber die Rollos wieder
+      ganz öffnen; nachts nur den Merker löschen (Rollos bleiben wie sie sind).
+    mode: single
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.aussentemperatur    # <-- anpassen
+        below: 23
+        for:
+          minutes: 30
+    conditions:
+      - condition: state
+        entity_id: input_boolean.rollos_hitzeschutz
+        state: "on"
+    actions:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.rollos_hitzeschutz
+      - if:
+          - condition: state
+            entity_id: sun.sun
+            state: above_horizon
+        then:
+          - action: cover.open_cover
+            target:
+              entity_id: cover.rollos_hitzeschutz
