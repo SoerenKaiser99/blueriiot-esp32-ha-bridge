@@ -19,7 +19,7 @@ Das Blueriiot-Ökosystem ist geschlossen:
 - Keine native Home-Assistant-Integration
 - Akkulaufzeit leidet unter ständigem BLE-Advertising für Cloud-Sync
 
-Diese Bridge läuft **vollständig lokal**, pollt nach **deinem** Zeitplan (Default: alle 30 Min) und liefert dir 5 native HA-Sensoren plus volle Automatisierungs-Kontrolle.
+Diese Bridge läuft **vollständig lokal**, pollt nach **deinem** Zeitplan (Default: alle 30 Min) und liefert dir 6 native HA-Sensoren plus volle Automatisierungs-Kontrolle.
 
 ## Was du bekommst
 
@@ -28,7 +28,8 @@ Diese Bridge läuft **vollständig lokal**, pollt nach **deinem** Zeitplan (Defa
 | `sensor.blueconnect_pool_temperature` | °C | Bytes 1-2 des BLE-Frames |
 | `sensor.blueconnect_pool_ph` | pH | Bytes 3-4 |
 | `sensor.blueconnect_pool_orp` | mV | Bytes 5-6 |
-| `sensor.blueconnect_pool_salinity` | g/L | Bytes 7-8 |
+| `sensor.blueconnect_pool_salinity` | g/L | Bytes 7-8 (nur Salt-Variante) |
+| `sensor.blueconnect_pool_conductivity` | µS/cm | Bytes 9-10 |
 | `sensor.blueconnect_pool_battery` | % | Byte 11 |
 | `binary_sensor.blueconnect_pool_status` | verbunden/getrennt | BLE-Link-Status |
 | `switch.blueconnect_pool_enable` | löst Reading aus | Manuell / Automation |
@@ -46,7 +47,7 @@ Diese Bridge läuft **vollständig lokal**, pollt nach **deinem** Zeitplan (Defa
 
 Der ESP32 sollte sich in ~5–10 m Abstand zum Pool befinden, mit Sichtlinie zum schwimmenden Sensor. Wetterfestes Outdoor-Gehäuse empfohlen.
 
-> **Hinweis**: Diese Anleitung ist für **Plus Salt (Gold)** geschrieben. Der einfache Blue Connect Go und andere Varianten nutzen das gleiche BLE-Protokoll, belegen aber andere Bytes für Salinity. pH/ORP/Temperatur-Parsing ist identisch.
+> **Hinweis**: Diese Anleitung ist für **Plus Salt (Gold)** geschrieben, der **Blue Connect Plus ohne Salz** nutzt aber denselben 12-Byte-Frame. Dort zeigt die App statt Salzgehalt die *Leitfähigkeit* (µS) — nutze `sensor.blueconnect_pool_conductivity` und ignoriere/deaktiviere die Salinity-Entität. Der einfache Blue Connect Go hat keine Leitfähigkeitssonde. pH/ORP/Temperatur-Parsing ist bei allen Varianten identisch.
 
 ---
 
@@ -107,7 +108,7 @@ Sobald der ESP32 im WiFi ist, klick **Logs** in ESPHome. Du siehst einen Strom w
 
 Such ein Gerät, das alle drei Kriterien erfüllt:
 
-1. **Name nach Muster `B200xxxxxx`** (Blue Connect Plus Salt sendet mit diesem Prefix)
+1. **Name nach Muster `B20xxxxxxx`** (z.B. `B200…` beim Plus Salt, `B202…` beim Plus ohne Salz — der Prefix variiert je nach Modell/Firmware)
 2. **MAC startet mit `00:A0:50`** — die offiziell registrierte OUI von Blue Riiot Labs
 3. **Starkes RSSI** (−40 oder besser, wenn du direkt am Pool stehst)
 
@@ -171,7 +172,7 @@ Die Salinity-Formel nutzt Divisor `/18.0`, kalibriert auf die offizielle Bluerii
 
 1. Mit der **offiziellen Blueriiot-App** ein Reading machen — Salzgehalt notieren (z.B. `6.4 g/L`)
 2. Gleichzeitig in den ESPHome-**Logs** nach der `raw_hex`-Zeile suchen — Bytes 7-8 herauspicken
-3. Rohwert berechnen: `raw = (byte8 << 8) + byte7`
+3. Rohwert berechnen: `raw = (byte8 << 8) + byte7` (beide Bytes vorzeichenlos)
 4. Neuer Divisor: `raw / app_wert`
 
 **Beispiel:**
@@ -186,16 +187,18 @@ Divisor = 115 / 6.4 = 17.97
 
 Dann in `blueconnect.yaml` die Lambda-Zeile anpassen:
 ```cpp
-float salt = (float)((int16_t)(x[8]<<8) + x[7]) / 17.97;
+float salt = (float) u16(7) / 17.97;
 ```
 
 > **Hinweis**: Sensor-Readings haben einen natürlichen Jitter von ±0.1 g/L. Lass dich nicht auf Nachkommastellen ein — Pool-Salzgehalt ändert sich über Wochen, nicht Minuten.
+
+**Leitfähigkeit** kalibrierst du genauso mit Bytes 9-10: `Divisor = raw / App-Wert_in_µS`, dann `/ 0.4134` in der `conductivity`-Zeile ersetzen. Der Standardfaktor stammt aus Community-Reverse-Engineering und muss je nach Sonde evtl. angepasst werden.
 
 ---
 
 ## So funktioniert das BLE-Protokoll
 
-Jede Notification ist **12 Bytes**, little-endian, wird vom Sensor gepusht, sobald wir `0x01` auf die Trigger-Characteristic schreiben:
+Jede Notification ist **12 Bytes**, little-endian, wird vom Sensor gepusht, sobald wir `0x01` auf die Trigger-Characteristic schreiben. Alle Bytes müssen **vorzeichenlos** (`uint8_t`) gelesen werden — auf dem ESP32 ist `char` signed, `x[i]` direkt zu lesen verfälscht jeden Wert, dessen Low-Byte ≥ `0x80` ist:
 
 | Byte(s) | Bedeutung | Formel | Beispiel (`33.E0.06.19.08.25.0B.73.00.FF.0D.10`) |
 |---|---|---|---|
@@ -204,7 +207,7 @@ Jede Notification ist **12 Bytes**, little-endian, wird vom Sensor gepusht, soba
 | 3-4 | pH (raw) | `(2048 - raw) / 232 + 7` | `0x0819 = 2073 → 6,89` |
 | 5-6 | ORP (raw) | `raw / 3.86 - 21,58` | `0x0B25 = 2853 → 717,5 mV` |
 | 7-8 | Salzgehalt (raw) | `raw / 18.0` (kalibriert) | `0x0073 = 115 → 6,4 g/L` |
-| 9-10 | Unbekannt / reserviert | – | `0x0DFF` |
+| 9-10 | Leitfähigkeit (raw) | `raw / 0.4134` → µS/cm | `0x0DFF = 3583 → 8667 µS/cm` |
 | 11 | Batterie | `raw / 36 * 100` | `0x10 = 16 → 44,4 %` |
 
 BLE-Service-/Characteristic-UUIDs:
@@ -253,6 +256,10 @@ Die Blueriiot-Sonde muss **aktiv** sein (im Wasser oder Kontakte kurzgeschlossen
 ### Salzgehalt-Wert ist um einen Faktor daneben
 
 Siehe **Kalibrierung** oben — Divisor neu aus aktuellem raw_hex-Log ableiten.
+
+### Temperatur/pH/ORP springen gelegentlich um einen festen Betrag
+
+In der aktuellen `blueconnect.yaml` behoben: ältere Versionen haben die Frame-Bytes als signed `char` gelesen. War ein Low-Byte ≥ `0x80`, lag der Wert um 256 Rohwert-Einheiten daneben (−2,56 °C, +1,1 pH, −66 mV). YAML aktualisieren und neu flashen.
 
 ### HA zeigt weniger Nachkommastellen als ESPHome
 

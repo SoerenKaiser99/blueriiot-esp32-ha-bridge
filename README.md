@@ -19,7 +19,7 @@ The Blueriiot ecosystem is closed:
 - No native Home Assistant integration
 - Battery life suffers from constant BLE advertising for cloud sync
 
-This bridge runs **fully local**, polls on **your** schedule (default: every 30 min), and gives you 5 native HA sensors plus full automation control.
+This bridge runs **fully local**, polls on **your** schedule (default: every 30 min), and gives you 6 native HA sensors plus full automation control.
 
 ## What you get
 
@@ -28,7 +28,8 @@ This bridge runs **fully local**, polls on **your** schedule (default: every 30 
 | `sensor.blueconnect_pool_temperature` | °C | Bytes 1-2 of BLE frame |
 | `sensor.blueconnect_pool_ph` | pH | Bytes 3-4 |
 | `sensor.blueconnect_pool_orp` | mV | Bytes 5-6 |
-| `sensor.blueconnect_pool_salinity` | g/L | Bytes 7-8 |
+| `sensor.blueconnect_pool_salinity` | g/L | Bytes 7-8 (Salt variant only) |
+| `sensor.blueconnect_pool_conductivity` | µS/cm | Bytes 9-10 |
 | `sensor.blueconnect_pool_battery` | % | Byte 11 |
 | `binary_sensor.blueconnect_pool_status` | connected/disconnected | BLE link state |
 | `switch.blueconnect_pool_enable` | trigger reading | Manual / automation |
@@ -46,7 +47,7 @@ This bridge runs **fully local**, polls on **your** schedule (default: every 30 
 
 The ESP32 needs to be within ~5–10 m of the pool with line-of-sight to the floating sensor. Outdoor weatherproof enclosure recommended.
 
-> **Note**: This guide is written for **Plus Salt (Gold)**. The plain Blue Connect Go and other variants use the same BLE protocol but expose different bytes for salinity. The pH/ORP/temperature parsing is identical.
+> **Note**: This guide is written for **Plus Salt (Gold)**, but the non-salt **Blue Connect Plus** uses the same 12-byte frame. On a non-salt Plus the app shows *Conductivity* (µS) instead of salinity — use `sensor.blueconnect_pool_conductivity` and ignore/disable the salinity entity. The plain Blue Connect Go has no conductivity probe. pH/ORP/temperature parsing is identical across all variants.
 
 ---
 
@@ -107,7 +108,7 @@ Once the ESP32 is on WiFi, click **Logs** in ESPHome. You'll see a stream like:
 
 Look for a device matching all of these:
 
-1. **Name pattern `B200xxxxxx`** (Blue Connect Plus Salt advertises with this prefix)
+1. **Name pattern `B20xxxxxxx`** (e.g. `B200…` on a Plus Salt, `B202…` on a non-salt Plus — the prefix varies by model/firmware)
 2. **MAC starting with `00:A0:50`** — Blue Riiot Labs' OUI (officially registered)
 3. **Strong RSSI** (−40 or better if you're standing next to the pool)
 
@@ -171,7 +172,7 @@ The salinity formula uses divisor `/18.0`, calibrated to match the official Blue
 
 1. Take a reading with the **official Blueriiot app** — note the salinity value (e.g. `6.4 g/L`)
 2. At the same time, check the ESPHome **Logs** for the `raw_hex` line — find the pair of bytes 7-8
-3. Decode the raw value: `raw = (byte8 << 8) + byte7`
+3. Decode the raw value: `raw = (byte8 << 8) + byte7` (both bytes unsigned)
 4. New divisor: `raw / app_value`
 
 **Example:**
@@ -186,16 +187,18 @@ divisor = 115 / 6.4 = 17.97
 
 Then update the lambda in `blueconnect.yaml`:
 ```cpp
-float salt = (float)((int16_t)(x[8]<<8) + x[7]) / 17.97;
+float salt = (float) u16(7) / 17.97;
 ```
 
 > **Note**: Sensor readings have natural ±0.1 g/L jitter. Don't chase decimals — pool salinity changes over weeks, not minutes.
+
+**Conductivity** works the same way with bytes 9-10: `divisor = raw / app_value_in_µS`, then change `/ 0.4134` in the `conductivity` line. The default factor comes from community reverse engineering and may need adjusting for your probe.
 
 ---
 
 ## How the BLE protocol works
 
-Each notification is **12 bytes**, little-endian, pushed by the sensor when we write `0x01` to the trigger characteristic:
+Each notification is **12 bytes**, little-endian, pushed by the sensor when we write `0x01` to the trigger characteristic. All bytes must be read as **unsigned** (`uint8_t`) — on the ESP32 `char` is signed, so reading `x[i]` directly corrupts any value whose low byte is ≥ `0x80`:
 
 | Byte(s) | Meaning | Formula | Example (`33.E0.06.19.08.25.0B.73.00.FF.0D.10`) |
 |---|---|---|---|
@@ -204,7 +207,7 @@ Each notification is **12 bytes**, little-endian, pushed by the sensor when we w
 | 3-4 | pH (raw) | `(2048 - raw) / 232 + 7` | `0x0819 = 2073 → 6.89` |
 | 5-6 | ORP (raw) | `raw / 3.86 - 21.58` | `0x0B25 = 2853 → 717.5 mV` |
 | 7-8 | Salinity (raw) | `raw / 18.0` (calibrated) | `0x0073 = 115 → 6.4 g/L` |
-| 9-10 | Unknown / reserved | – | `0x0DFF` |
+| 9-10 | Conductivity (raw) | `raw / 0.4134` → µS/cm | `0x0DFF = 3583 → 8667 µS/cm` |
 | 11 | Battery | `raw / 36 * 100` | `0x10 = 16 → 44.4 %` |
 
 BLE service/characteristic UUIDs:
@@ -253,6 +256,10 @@ The Blueriiot probe must be **active** (in water or contacts shorted). Dry-store
 ### Salinity value is off by a factor
 
 See **Calibration** above — re-derive the divisor from a fresh raw_hex log.
+
+### Temperature/pH/ORP occasionally jump by a fixed amount
+
+Fixed in the current `blueconnect.yaml`: older versions read the frame bytes as signed `char`, so whenever a low byte was ≥ `0x80` the value was off by 256 raw counts (−2.56 °C, +1.1 pH, −66 mV). Update your YAML and reflash.
 
 ### HA shows fewer decimals than ESPHome
 

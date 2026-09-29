@@ -148,6 +148,13 @@ sensor:
     icon: "mdi:shaker-outline"
     state_class: "measurement"
     accuracy_decimals: 1
+  - platform: template
+    id: sensor_${blueriiot_id_prefix}_conductivity
+    name: ${blueriiot_name_prefix} Conductivity
+    unit_of_measurement: "µS/cm"
+    icon: "mdi:flash-triangle-outline"
+    state_class: "measurement"
+    accuracy_decimals: 0
 
 button:
   - platform: template
@@ -179,32 +186,49 @@ text_sensor:
             // Raw frame is 12 bytes — see README for byte layout
             std::string rawhex = format_hex_pretty((uint8_t *) x.c_str(), x.size()).c_str();
             ESP_LOGD("raw_hex", "%s", rawhex.c_str());
+            if (x.size() < 12) {
+              ESP_LOGW("blueriiot", "Short frame (%u bytes), ignoring", (unsigned) x.size());
+              return;
+            }
 
-            // Bytes 1-2: Temperature (°C, /100)
-            float temperature = (float)((int16_t)(x[2]<< 8) + x[1]) / 100;
+            // x is a std::string, and char is signed on the ESP32 (Xtensa).
+            // Read every byte as uint8_t, otherwise bytes >= 0x80 turn negative
+            // and the decoded value is off by 256 raw counts.
+            const uint8_t *b = (const uint8_t *) x.data();
+            auto u16 = [b](int lo) -> uint16_t { return (uint16_t) (b[lo] | (b[lo + 1] << 8)); };
+
+            // Bytes 1-2: Temperature (°C, /100, signed)
+            float temperature = (float) (int16_t) u16(1) / 100;
             ESP_LOGD("temp", "%f", temperature);
             id(sensor_${blueriiot_id_prefix}_temperature).publish_state(temperature);
 
             // Bytes 3-4: pH (raw → calibrated)
-            float raw_ph = (float)((int16_t)(x[4]<< 8) + x[3]);
-            float ph = (float)((int16_t)(2048 - raw_ph)) / 232 + 7;
+            float ph = (2048.0f - (float) u16(3)) / 232 + 7;
             ESP_LOGD("ph", "%f", ph);
             id(sensor_${blueriiot_id_prefix}_ph).publish_state(ph);
 
             // Bytes 5-6: ORP (mV)
-            float orp = (float)((int16_t)(x[6]<< 8) + x[5]) / 3.86 - 21.57826;
+            float orp = (float) u16(5) / 3.86 - 21.57826;
             ESP_LOGD("orp", "%f", orp);
             id(sensor_${blueriiot_id_prefix}_orp).publish_state(orp);
 
             // Bytes 7-8: Salinity (g/L) — divisor /18.0 calibrated against
             // the official Blueriiot app. Adjust if your app shows a
-            // different value (see README "Calibration").
-            float salt = (float)((int16_t)(x[8]<< 8) + x[7]) / 18.0;
+            // different value (see README "Calibration"). Only meaningful on
+            // the Salt variant; ignore/disable it on a non-salt Plus.
+            float salt = (float) u16(7) / 18.0;
             ESP_LOGD("salt", "%f", salt);
             id(sensor_${blueriiot_id_prefix}_salt).publish_state(salt);
 
+            // Bytes 9-10: Conductivity (µS/cm) — what the app shows as
+            // "Leitfähigkeit"/"Conductivity". Factor 0.4134 from community
+            // reverse engineering; recalibrate like salinity if needed.
+            float conductivity = (float) u16(9) / 0.4134;
+            ESP_LOGD("conductivity", "%f", conductivity);
+            id(sensor_${blueriiot_id_prefix}_conductivity).publish_state(conductivity);
+
             // Byte 11: Battery (%)
-            float bat = (float)((int16_t) x[11]) / 36 * 100;
+            float bat = (float) b[11] / 36 * 100;
             ESP_LOGD("bat", "%f", bat);
             id(sensor_${blueriiot_id_prefix}_bat).publish_state(bat);
 
