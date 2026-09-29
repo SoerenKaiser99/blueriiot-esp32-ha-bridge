@@ -1,0 +1,12 @@
+# Sperr-Timer für den Lüfter in der Waschküche.
+# Läuft, solange der Lüfter nach manuellem Ausschalten aus bleiben soll.
+#
+# Anlegen über Einstellungen → Geräte & Dienste → Helfer → Timer
+# (Name "Waschküche Lüfter Sperre", Dauer 02:00:00, "Zustand wiederherstellen"
+# aktivieren) oder in die configuration.yaml unter `timer:` einfügen.
+
+waschkueche_luefter_sperre:
+  name: Waschküche Lüfter Sperre
+  icon: mdi:fan-off
+  duration: "02:00:00"
+  restore: true # Sperre überlebt einen Neustart von Home Assistant

@@ -1,0 +1,58 @@
+# Lüfter Waschküche: nach manuellem Ausschalten 2 Stunden aus lassen.
+#
+# Einfügen über Einstellungen → Automationen → ⋮ → In YAML bearbeiten.
+# `switch.waschkueche_luefter` durch die echte Entität des Lüfters ersetzen
+# (bei einer fan-Entität z. B. `fan.waschkueche_luefter`).
+#
+# "Manuell" heißt: nicht von einer Automation/einem Skript ausgelöst.
+# Das erkennt HA am Kontext – Automationen setzen immer eine parent_id,
+# Schalten per Dashboard/App oder am Wandschalter nicht.
+#
+# WICHTIG: In der bestehenden Lüfter-Automation, die den Lüfter automatisch
+# einschaltet, zusätzlich diese Bedingung eintragen:
+#
+#   conditions:
+#     - condition: state
+#       entity_id: timer.waschkueche_luefter_sperre
+#       state: idle
+#
+# Erst dadurch bleibt der Lüfter wirklich aus, solange der Timer läuft.
+
+alias: Waschküche Lüfter – manuell aus sperrt 2 Std
+description: >-
+  Startet eine 2-stündige Sperre, wenn der Lüfter von Hand ausgeschaltet wird,
+  und hebt sie wieder auf, wenn er von Hand eingeschaltet wird.
+mode: restart
+triggers:
+  - trigger: state
+    entity_id: switch.waschkueche_luefter
+    from: "on"
+    to: "off"
+    id: manuell_aus
+  - trigger: state
+    entity_id: switch.waschkueche_luefter
+    from: "off"
+    to: "on"
+    id: manuell_an
+conditions:
+  # Nur reagieren, wenn nicht eine Automation geschaltet hat
+  - condition: template
+    value_template: "{{ trigger.to_state.context.parent_id is none }}"
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: manuell_aus
+        sequence:
+          - action: timer.start
+            target:
+              entity_id: timer.waschkueche_luefter_sperre
+            data:
+              duration: "02:00:00"
+      - conditions:
+          - condition: trigger
+            id: manuell_an
+        sequence:
+          - action: timer.cancel
+            target:
+              entity_id: timer.waschkueche_luefter_sperre
