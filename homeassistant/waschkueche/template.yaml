@@ -1,0 +1,71 @@
+# Lüftet die Waschküche nur, wenn die Außenluft absolut trockener ist.
+#
+# Relative Luftfeuchte allein reicht nicht: Warme Sommerluft mit 60 % rF
+# enthält oft mehr Wasser als kühle Kellerluft mit 75 % rF. Ein Abluftlüfter
+# würde dann feuchte Luft nachziehen statt zu trocknen. Deshalb rechnen wir
+# beide Werte in absolute Feuchte (g Wasser pro m³ Luft) um und vergleichen.
+#
+# Einfügen in die configuration.yaml unter `template:` (danach HA neu starten
+# bzw. Entwicklerwerkzeuge → YAML → Template-Entitäten neu laden).
+# Die vier Sensor-IDs unten durch deine echten Entitäten ersetzen:
+#   sensor.waschkueche_temperatur / sensor.waschkueche_luftfeuchte
+#   sensor.aussen_temperatur      / sensor.aussen_luftfeuchte
+#
+# In der Automation, die den Lüfter automatisch einschaltet, zusätzlich als
+# Bedingung eintragen:
+#
+#   conditions:
+#     - condition: template
+#       value_template: >-
+#         {{ not is_state('binary_sensor.waschkueche_lueften_sinnvoll', 'off') }}
+#
+# "nicht off" statt "on": Fällt ein Sensor aus (unavailable), blockiert das
+# den Lüfter nicht, sondern die Automation verhält sich wie bisher.
+
+- sensor:
+    # Absolute Feuchte nach Magnus-Formel:
+    # AF = 6,112 · e^(17,67·T / (T+243,5)) · rF · 2,1674 / (273,15+T)
+    - name: Waschküche absolute Feuchte
+      unique_id: waschkueche_absolute_feuchte
+      unit_of_measurement: "g/m³"
+      state_class: measurement
+      icon: mdi:water
+      availability: >-
+        {{ has_value('sensor.waschkueche_temperatur')
+           and has_value('sensor.waschkueche_luftfeuchte') }}
+      state: >-
+        {% set t = states('sensor.waschkueche_temperatur') | float %}
+        {% set rh = states('sensor.waschkueche_luftfeuchte') | float %}
+        {{ (6.112 * e ** (17.67 * t / (t + 243.5)) * rh * 2.1674
+            / (273.15 + t)) | round(2) }}
+
+    - name: Außen absolute Feuchte
+      unique_id: aussen_absolute_feuchte
+      unit_of_measurement: "g/m³"
+      state_class: measurement
+      icon: mdi:water-outline
+      availability: >-
+        {{ has_value('sensor.aussen_temperatur')
+           and has_value('sensor.aussen_luftfeuchte') }}
+      state: >-
+        {% set t = states('sensor.aussen_temperatur') | float %}
+        {% set rh = states('sensor.aussen_luftfeuchte') | float %}
+        {{ (6.112 * e ** (17.67 * t / (t + 243.5)) * rh * 2.1674
+            / (273.15 + t)) | round(2) }}
+
+- binary_sensor:
+    # An, sobald innen mindestens 1,0 g/m³ mehr Wasser in der Luft ist als
+    # außen; aus erst, wenn der Vorsprung unter 0,5 g/m³ fällt. Die Lücke
+    # (Hysterese) verhindert ständiges An/Aus rund um die Schwelle.
+    - name: Waschküche Lüften sinnvoll
+      unique_id: waschkueche_lueften_sinnvoll
+      icon: mdi:fan-auto
+      availability: >-
+        {{ has_value('sensor.waschkueche_absolute_feuchte')
+           and has_value('sensor.aussen_absolute_feuchte') }}
+      state: >-
+        {% set d = states('sensor.waschkueche_absolute_feuchte') | float
+                 - states('sensor.aussen_absolute_feuchte') | float %}
+        {{ d >= 1.0 or (this.state == 'on' and d >= 0.5) }}
+      delay_off:
+        minutes: 5
