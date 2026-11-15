@@ -192,7 +192,7 @@ float salt = (float) u16(7) / 17.97;
 
 > **Note**: Sensor readings have natural ±0.1 g/L jitter. Don't chase decimals — pool salinity changes over weeks, not minutes.
 
-**Conductivity** works the same way with bytes 9-10: `divisor = raw / app_value_in_µS`, then change `/ 0.4134` in the `conductivity` line. The default factor comes from community reverse engineering and may need adjusting for your probe.
+**Conductivity** works the same way with bytes 9-10: `divisor = raw / app_value_in_µS`, then change `/ 1.497` in the `conductivity` line. The default factor was calibrated against the official app on a non-salt Blue Connect Plus (raw 3601 ↔ app 2406 µS) and may need adjusting for your probe.
 
 ---
 
@@ -207,7 +207,7 @@ Each notification is **12 bytes**, little-endian, pushed by the sensor when we w
 | 3-4 | pH (raw) | `(2048 - raw) / 232 + 7` | `0x0819 = 2073 → 6.89` |
 | 5-6 | ORP (raw) | `raw / 3.86 - 21.58` | `0x0B25 = 2853 → 717.5 mV` |
 | 7-8 | Salinity (raw) | `raw / 18.0` (calibrated) | `0x0073 = 115 → 6.4 g/L` |
-| 9-10 | Conductivity (raw) | `raw / 0.4134` → µS/cm | `0x0DFF = 3583 → 8667 µS/cm` |
+| 9-10 | Conductivity (raw) | `raw / 1.497` → µS/cm | `0x0DFF = 3583 → 2394 µS/cm` |
 | 11 | Battery | `raw / 36 * 100` | `0x10 = 16 → 44.4 %` |
 
 BLE service/characteristic UUIDs:
