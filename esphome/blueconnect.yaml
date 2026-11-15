@@ -221,9 +221,11 @@ text_sensor:
             id(sensor_${blueriiot_id_prefix}_salt).publish_state(salt);
 
             // Bytes 9-10: Conductivity (µS/cm) — what the app shows as
-            // "Leitfähigkeit"/"Conductivity". Factor 0.4134 from community
-            // reverse engineering; recalibrate like salinity if needed.
-            float conductivity = (float) u16(9) / 0.4134;
+            // "Leitfähigkeit"/"Conductivity". Divisor 1.497 calibrated against
+            // the official app on a non-salt Plus (raw 3601 -> app 2406 µS,
+            // issue #1). Single data point so far; recalibrate like salinity
+            // if your app shows a different value.
+            float conductivity = (float) u16(9) / 1.497;
             ESP_LOGD("conductivity", "%f", conductivity);
             id(sensor_${blueriiot_id_prefix}_conductivity).publish_state(conductivity);
 

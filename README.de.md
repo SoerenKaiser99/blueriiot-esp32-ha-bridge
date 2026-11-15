@@ -192,7 +192,7 @@ float salt = (float) u16(7) / 17.97;
 
 > **Hinweis**: Sensor-Readings haben einen natürlichen Jitter von ±0.1 g/L. Lass dich nicht auf Nachkommastellen ein — Pool-Salzgehalt ändert sich über Wochen, nicht Minuten.
 
-**Leitfähigkeit** kalibrierst du genauso mit Bytes 9-10: `Divisor = raw / App-Wert_in_µS`, dann `/ 0.4134` in der `conductivity`-Zeile ersetzen. Der Standardfaktor stammt aus Community-Reverse-Engineering und muss je nach Sonde evtl. angepasst werden.
+**Leitfähigkeit** kalibrierst du genauso mit Bytes 9-10: `Divisor = raw / App-Wert_in_µS`, dann `/ 1.497` in der `conductivity`-Zeile ersetzen. Der Standardfaktor wurde an einem Blue Connect Plus ohne Salz gegen die offizielle App abgeglichen (raw 3601 ↔ App 2406 µS) und muss je nach Sonde evtl. angepasst werden.
 
 ---
 
@@ -207,7 +207,7 @@ Jede Notification ist **12 Bytes**, little-endian, wird vom Sensor gepusht, soba
 | 3-4 | pH (raw) | `(2048 - raw) / 232 + 7` | `0x0819 = 2073 → 6,89` |
 | 5-6 | ORP (raw) | `raw / 3.86 - 21,58` | `0x0B25 = 2853 → 717,5 mV` |
 | 7-8 | Salzgehalt (raw) | `raw / 18.0` (kalibriert) | `0x0073 = 115 → 6,4 g/L` |
-| 9-10 | Leitfähigkeit (raw) | `raw / 0.4134` → µS/cm | `0x0DFF = 3583 → 8667 µS/cm` |
+| 9-10 | Leitfähigkeit (raw) | `raw / 1.497` → µS/cm | `0x0DFF = 3583 → 2394 µS/cm` |
 | 11 | Batterie | `raw / 36 * 100` | `0x10 = 16 → 44,4 %` |
 
 BLE-Service-/Characteristic-UUIDs:
